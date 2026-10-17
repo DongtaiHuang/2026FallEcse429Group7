@@ -111,6 +111,31 @@ class StateManager:
         self.undo_actions.append(undo)
 
 
+    def track_deleted_relationship(
+        self, parent_type, parent_id, relation_type, child_id
+    ):
+        """Register recreation of a relationship removed by a test."""
+
+        valid_types = ("todos", "projects", "categories")
+        if parent_type not in valid_types:
+            raise ValueError(f"Invalid parent type: {parent_type}")
+
+        endpoint = f"/{parent_type}/{parent_id}/{relation_type}"
+
+        def undo():
+            response = self.api.post(
+                endpoint,
+                data={"id": child_id}
+            )
+
+            if not 200 <= response.status_code < 300:
+                raise AssertionError(
+                    f"Failed to restore relationship at {endpoint}: "
+                    f"HTTP {response.status_code}: {response.text}"
+                )
+
+        self.undo_actions.append(undo)
+
     def restore(self):
         """Attempt all undo actions in reverse order."""
         errors = []

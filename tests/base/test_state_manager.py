@@ -127,3 +127,157 @@ def test_state_manager_restores_updated_todo(api):
     finally:
         # Ensure the temporary Todo is deleted.
         api.delete(f"/todos/{todo_id}")
+
+def test_state_manager_restores_relationship(api):
+    """Verify cleanup removes a link but preserves both objects."""
+
+    suffix = uuid.uuid4().hex[:8]
+
+    manager = StateManager(api)
+    todo_id = None
+    category_id = None
+
+    try:
+        # Create a temporary Todo.
+        todo_response = api.post(
+            "/todos",
+            data={"title": f"Relation-Todo-{suffix}"}
+        )
+        assert todo_response.status_code == 201, todo_response.text
+
+        todo_id = todo_response.json()["id"]
+
+        # Create a temporary Category.
+        category_response = api.post(
+            "/categories",
+            data={"title": f"Relation-Category-{suffix}"}
+        )
+        assert category_response.status_code == 201, category_response.text
+
+        category_id = category_response.json()["id"]
+
+        # Link the Todo and Category.
+        link_response = api.post(
+            f"/todos/{todo_id}/categories",
+            data={"id": category_id}
+        )
+        assert link_response.status_code == 201, link_response.text
+
+        # Register the relationship for cleanup.
+        manager.track_relationship(
+            "todos",
+            todo_id,
+            "categories",
+            category_id
+        )
+
+        # Confirm the relationship exists.
+        before = api.get(f"/todos/{todo_id}/categories")
+        assert before.status_code == 200
+        assert any(
+            str(category["id"]) == str(category_id)
+            for category in before.json()["categories"]
+        )
+
+        # Restore the state by removing the relationship.
+        manager.restore()
+
+        # Verify the link has been removed.
+        after = api.get(f"/todos/{todo_id}/categories")
+        assert after.status_code == 200
+        assert after.json()["categories"] == []
+
+        # Verify that both entities still exist.
+        todo_get = api.get(f"/todos/{todo_id}")
+        category_get = api.get(f"/categories/{category_id}")
+
+        assert todo_get.status_code == 200
+        assert category_get.status_code == 200
+
+        assert len(todo_get.json()["todos"]) == 1
+        assert len(category_get.json()["categories"]) == 1
+
+    finally:
+        # Cleanup is attempted even if an assertion fails.
+        try:
+            manager.restore()
+        finally:
+            if todo_id is not None:
+                api.delete(f"/todos/{todo_id}")
+            if category_id is not None:
+                api.delete(f"/categories/{category_id}")
+
+def test_restore_deleted_relationship(api):
+    """Verify a deleted Todo-Category link can be restored."""
+
+    suffix = uuid.uuid4().hex[:8]
+    manager = StateManager(api)
+
+    todo_id = None
+    category_id = None
+
+    try:
+        # Create a Todo.
+        todo_response = api.post(
+            "/todos",
+            data={"title": f"Restore-Todo-{suffix}"}
+        )
+        assert todo_response.status_code == 201, todo_response.text
+        todo_id = todo_response.json()["id"]
+
+        # Create a Category.
+        category_response = api.post(
+            "/categories",
+            data={"title": f"Restore-Category-{suffix}"}
+        )
+        assert category_response.status_code == 201, category_response.text
+        category_id = category_response.json()["id"]
+
+        # Create the original relationship.
+        link_response = api.post(
+            f"/todos/{todo_id}/categories",
+            data={"id": category_id}
+        )
+        assert link_response.status_code == 201, link_response.text
+
+        # Register the relationship for restoration.
+        manager.track_deleted_relationship(
+            "todos", todo_id, "categories", category_id
+        )
+
+        # Delete the relationship.
+        delete_response = api.delete(
+            f"/todos/{todo_id}/categories/{category_id}"
+        )
+        assert 200 <= delete_response.status_code < 300
+
+        # Verify the relationship was removed.
+        after_delete = api.get(
+            f"/todos/{todo_id}/categories"
+        )
+        assert after_delete.status_code == 200
+        assert after_delete.json()["categories"] == []
+
+        # Restore the relationship.
+        manager.restore()
+
+        # Verify the relationship exists again.
+        restored = api.get(
+            f"/todos/{todo_id}/categories"
+        )
+        assert restored.status_code == 200
+
+        assert any(
+            str(category["id"]) == str(category_id)
+            for category in restored.json()["categories"]
+        )
+
+    finally:
+        # Cleanup temporary objects, even if the test fails.
+        try:
+            manager.restore()
+        finally:
+            if todo_id is not None:
+                api.delete(f"/todos/{todo_id}")
+            if category_id is not None:
+                api.delete(f"/categories/{category_id}")
