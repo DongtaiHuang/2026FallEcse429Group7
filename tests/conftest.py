@@ -3,8 +3,17 @@ import os
 
 import pytest
 import requests
-
+from base.api_helper import APIHelper
 BASE_URL = os.getenv("TODO_API_URL", "http://localhost:4567")
+
+@pytest.fixture
+def api(api_url):
+    """Provide a shared API helper for each test."""
+    helper = APIHelper(base_url=api_url)
+
+    yield helper
+
+    helper.close()
 
 
 @pytest.fixture(scope="session")
