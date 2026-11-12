@@ -1,1 +1,188 @@
+Feature: Category Management
+  As a user
+  I want to create a category
+  So that I can classify my tasks
 
+  Background:
+    Given the Todo Manager API is running
+    And I have recorded the current category collection
+
+  # Normal flow
+  Scenario Outline: Create a category with a title and description
+    When I create a category with title "<title>" and description "<description>"
+    Then the response status should be 201
+    And the saved category should have title "<title>" and description "<description>"
+
+    Examples:
+      | title      | description          |
+      | Coursework | Tasks for my courses |
+
+  # Alternate flow
+  Scenario Outline: Create a category with only a title
+    When I create a category with only the title "<title>"
+    Then the response status should be 201
+    And the saved category should have title "<title>" and an empty description
+
+    Examples:
+      | title    |
+      | Personal |
+
+  # Error flow
+  Scenario Outline: Reject a category with an empty title
+    When I try to create a category with an empty title and description "<description>"
+    Then the response status should be 400
+    And the category collection should be unchanged
+
+    Examples:
+      | description         |
+      | Tasks for this week |
+
+
+
+  # C02 — View categories
+
+  # Normal flow
+  Scenario Outline: C02 View the category list
+    Given I have created a category named "<title>"
+    When I request the category list
+    Then the response status should be 200
+    And the category list should include the category I last created
+
+    Examples:
+      | title     |
+      | Groceries |
+
+  # Alternate flow
+  Scenario Outline: C02 Filter categories by title
+    Given I have created a category named "<other_title>"
+    And I have created a category named "<title>"
+    When I request categories with title "<title>"
+    Then the response status should be 200
+    And the category list should include the category I last created
+    And every returned category should have title "<title>"
+
+    Examples:
+      | title   | other_title |
+      | Reading | Errands     |
+
+  # Error flow
+  Scenario Outline: C02 Reject an unsupported response format
+    When I request the category list with Accept "<media_type>"
+    Then the response status should be 406
+    And the category collection should be unchanged
+
+    Examples:
+      | media_type       |
+      | application/yaml |
+
+
+
+        # C03 — Update a category
+
+  # Normal flow
+  Scenario Outline: C03 Rename an existing category
+    Given I have created a category with title "<old_title>" and description "<description>"
+    When I rename the saved category to "<new_title>"
+    Then the response status should be 200
+    And the saved category should have title "<new_title>" and description "<description>"
+
+    Examples:
+      | old_title | new_title     | description  |
+      | Shopping  | Shopping List | Items to buy |
+
+  # Alternate flow
+  Scenario Outline: C03 Update only the category description
+    Given I have created a category with title "<title>" and description "<old_description>"
+    When I change the saved category description to "<new_description>"
+    Then the response status should be 200
+    And the saved category should have title "<title>" and description "<new_description>"
+
+    Examples:
+      | title   | old_description | new_description       |
+      | Reading | Books to read   | Books to read in 2026 |
+
+  # Error flow
+  Scenario Outline: C03 Reject an empty category title during update
+    Given I have created a category with title "<title>" and description "<description>"
+    When I try to rename the saved category to an empty title
+    Then the response status should be 400
+    And the saved category should have title "<title>" and description "<description>"
+
+    Examples:
+      | title   | description       |
+      | Errands | Tasks around town |
+
+
+        # C04 — Retrieve a category by ID
+
+  # Normal flow
+  Scenario Outline: C04 Retrieve a category with a title and description
+    Given I have created a category with title "<title>" and description "<description>"
+    When I request the category I last created by ID
+    Then the response status should be 200
+    And the response should contain the requested category with title "<title>" and description "<description>"
+
+    Examples:
+      | title   | description      |
+      | Fitness | Weekly workouts  |
+
+  # Alternate flow
+  Scenario Outline: C04 Retrieve a category created without a description
+    Given I have created a category named "<title>"
+    When I request the category I last created by ID
+    Then the response status should be 200
+    And the response should contain the requested category with title "<title>" and an empty description
+
+    Examples:
+      | title  |
+      | Travel |
+
+  # Error flow
+  Scenario Outline: C04 Retrieve a category that no longer exists
+    Given I have created a category named "<title>"
+    And the category I last created has been deleted
+    When I request the category I last created by ID
+    Then the response status should be 404
+
+    Examples:
+      | title             |
+      | Temporary Archive |
+
+
+        # C05 — Delete a category
+
+  # Normal flow
+  Scenario Outline: C05 Delete an existing category
+    Given I have created a category named "<title>"
+    When I delete the category I last created
+    Then the response status should be 200
+    And the deleted category should no longer be retrievable
+
+    Examples:
+      | title       |
+      | Old errands |
+
+  # Alternate flow
+  Scenario Outline: C05 Delete one category and keep another
+    Given I have created a category named "<kept_title>"
+    And I have created a category named "<deleted_title>"
+    When I delete the category I last created
+    Then the response status should be 200
+    And the deleted category should no longer be retrievable
+    And the first category I created should still have title "<kept_title>"
+
+    Examples:
+      | kept_title | deleted_title |
+      | Keep notes | Old notes     |
+
+  # Error flow
+  Scenario Outline: C05 Reject deleting the same category twice
+    Given I have created a category named "<title>"
+    And the category I last created has been deleted
+    When I delete the category I last created
+    Then the response status should be 404
+    And the category collection should be unchanged
+
+    Examples:
+      | title        |
+      | Expired list |
