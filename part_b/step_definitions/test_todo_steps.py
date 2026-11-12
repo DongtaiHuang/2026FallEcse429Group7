@@ -20,7 +20,7 @@ FEATURE_DIR = (
 scenarios(str(FEATURE_DIR / "create_todo.feature"))
 scenarios(str(FEATURE_DIR / "view_todo.feature"))
 scenarios(str(FEATURE_DIR / "update_todo.feature"))
-
+scenarios(str(FEATURE_DIR / "complete_todo.feature"))
 @pytest.fixture
 def todo_case():
     """Store scenario information and clean up created todos."""
@@ -400,4 +400,81 @@ def verify_original_todo_preserved(todo_case, title):
     # Invalid updates must not modify the todo.
     assert todo == original, (
         "The invalid update changed the original todo"
+    )
+
+# ============================================================
+# T04 - Complete Todo
+# ============================================================
+
+@given(
+    parsers.parse(
+        'the todo has completion status "{status}"'
+    )
+)
+def given_todo_completion_status(todo_case, status):
+    """Set up the todo with the required initial status."""
+    assert status in ("true", "false")
+
+    update_todo_field(
+        todo_case,
+        "doneStatus",
+        status == "true"
+    )
+
+    response = todo_case["response"]
+    assert response.status_code == 200, response.text
+
+    todo = get_current_todo(todo_case)
+
+    assert str(todo["doneStatus"]).lower() == status
+
+
+@when(
+    parsers.parse(
+        'I change the todo completion status to "{status}"'
+    )
+)
+def change_todo_completion_status(todo_case, status):
+    """Update the completion status through the API."""
+    todo_case["original_todo"] = get_current_todo(
+        todo_case
+    ).copy()
+
+    if status in ("true", "false"):
+        value = status == "true"
+    else:
+        value = status
+
+    update_todo_field(
+        todo_case,
+        "doneStatus",
+        value
+    )
+
+
+@then(
+    parsers.parse(
+        'the todo completion status should be "{status}"'
+    )
+)
+def verify_todo_completion_status(todo_case, status):
+    """Check that the completion status was saved."""
+    todo = get_current_todo(todo_case)
+
+    actual_status = str(todo["doneStatus"]).lower()
+
+    assert actual_status == status, (
+        f"Expected doneStatus '{status}', "
+        f"but got '{actual_status}'"
+    )
+
+
+@then("the todo completion status should remain unchanged")
+def verify_completion_status_unchanged(todo_case):
+    """Confirm an invalid update preserves the original todo."""
+    original = todo_case["original_todo"]
+    current = get_current_todo(todo_case)
+
+    assert current == original, (
+        "An invalid completion status changed the todo"
     )
