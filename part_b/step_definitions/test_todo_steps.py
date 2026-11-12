@@ -19,6 +19,7 @@ FEATURE_DIR = (
 
 scenarios(str(FEATURE_DIR / "create_todo.feature"))
 scenarios(str(FEATURE_DIR / "view_todo.feature"))
+scenarios(str(FEATURE_DIR / "update_todo.feature"))
 
 @pytest.fixture
 def todo_case():
@@ -261,3 +262,142 @@ def verify_todo_in_list(todo_case, title):
         and todo["title"] == title
         for todo in todos
     ), f"Created todo '{title}' not found in the list"
+
+# ============================================================
+# T03 - Update Todo
+# ============================================================
+
+def update_todo_field(todo_case, field, value):
+    """Update one field of the current todo."""
+    todo_id = todo_case["todo_id"]
+
+    response = requests.post(
+        f"{BASE_URL}/todos/{todo_id}",
+        json={field: value},
+        timeout=5
+    )
+
+    todo_case["response"] = response
+
+
+def get_current_todo(todo_case):
+    """Retrieve the todo after an update."""
+    todo_id = todo_case["todo_id"]
+
+    response = requests.get(
+        f"{BASE_URL}/todos/{todo_id}",
+        timeout=5
+    )
+
+    assert response.status_code == 200, response.text
+
+    todos = response.json()["todos"]
+    assert len(todos) == 1
+
+    return todos[0]
+
+
+# --------------------
+# Normal Flow
+# --------------------
+
+@when(
+    parsers.parse(
+        'I update the todo title to "{new_title}"'
+    )
+)
+def update_todo_title(todo_case, new_title):
+    update_todo_field(
+        todo_case,
+        "title",
+        new_title
+    )
+
+
+@then(
+    parsers.parse(
+        'the todo should have title "{title}"'
+    )
+)
+def verify_updated_title(todo_case, title):
+    todo = get_current_todo(todo_case)
+
+    assert todo["title"] == title, (
+        f"Expected title '{title}', "
+        f"but got '{todo['title']}'"
+    )
+
+
+# --------------------
+# Alternate Flow
+# --------------------
+
+@when(
+    parsers.parse(
+        'I update the todo description to "{description}"'
+    )
+)
+def update_todo_description(todo_case, description):
+    update_todo_field(
+        todo_case,
+        "description",
+        description
+    )
+
+
+@then(
+    parsers.parse(
+        'the todo should have description "{description}"'
+    )
+)
+def verify_updated_description(todo_case, description):
+    todo = get_current_todo(todo_case)
+
+    assert todo["description"] == description
+
+
+@then(
+    parsers.parse(
+        'the todo title should remain "{title}"'
+    )
+)
+def verify_title_unchanged(todo_case, title):
+    todo = get_current_todo(todo_case)
+
+    assert todo["title"] == title, (
+        "Updating the description unexpectedly "
+        "changed the todo title"
+    )
+
+
+# --------------------
+# Error Flow
+# --------------------
+
+@when("I update the todo title to an empty string")
+def update_todo_with_empty_title(todo_case):
+    # Save the original values before updating.
+    todo_case["original_todo"] = get_current_todo(todo_case).copy()
+
+    update_todo_field(
+        todo_case,
+        "title",
+        ""
+    )
+
+
+@then(
+    parsers.parse(
+        'the todo should still have its original title "{title}"'
+    )
+)
+def verify_original_todo_preserved(todo_case, title):
+    todo = get_current_todo(todo_case)
+    original = todo_case["original_todo"]
+
+    assert original["title"] == title
+
+    # Invalid updates must not modify the todo.
+    assert todo == original, (
+        "The invalid update changed the original todo"
+    )
