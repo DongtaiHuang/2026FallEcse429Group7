@@ -21,6 +21,8 @@ scenarios(str(FEATURE_DIR / "create_todo.feature"))
 scenarios(str(FEATURE_DIR / "view_todo.feature"))
 scenarios(str(FEATURE_DIR / "update_todo.feature"))
 scenarios(str(FEATURE_DIR / "complete_todo.feature"))
+scenarios(str(FEATURE_DIR / "delete_todo.feature"))
+
 @pytest.fixture
 def todo_case():
     """Store scenario information and clean up created todos."""
@@ -478,3 +480,132 @@ def verify_completion_status_unchanged(todo_case):
     assert current == original, (
         "An invalid completion status changed the todo"
     )
+
+# ============================================================
+# T05 - Delete Todo
+# ============================================================
+
+def delete_todo_by_id(todo_case, todo_id):
+    """Delete a todo and store the API response."""
+    response = requests.delete(
+        f"{BASE_URL}/todos/{todo_id}",
+        timeout=5
+    )
+
+    todo_case["response"] = response
+    return response
+
+
+# --------------------
+# Normal Flow
+# --------------------
+
+@when("I delete the current todo")
+def delete_current_todo(todo_case):
+    """Delete the Todo created during setup."""
+    todo_id = todo_case["todo_id"]
+
+    todo_case["deleted_id"] = todo_id
+
+    delete_todo_by_id(todo_case, todo_id)
+
+
+@then("the deleted todo should not be retrievable")
+def verify_deleted_todo(todo_case):
+    """Verify that a deleted Todo no longer exists."""
+    todo_id = todo_case["deleted_id"]
+
+    response = requests.get(
+        f"{BASE_URL}/todos/{todo_id}",
+        timeout=5
+    )
+
+    assert response.status_code == 404, (
+        f"Deleted todo {todo_id} still exists: "
+        f"HTTP {response.status_code}"
+    )
+
+
+# --------------------
+# Alternate Flow
+# --------------------
+
+@given(
+    parsers.parse(
+        'a second todo exists with title "{title}"'
+    )
+)
+def create_second_todo(todo_case, title):
+    """Create a second Todo to verify no side effects."""
+    todo_case["first_todo_id"] = todo_case["todo_id"]
+
+    response = requests.post(
+        f"{BASE_URL}/todos",
+        json={"title": title},
+        timeout=5
+    )
+
+    assert response.status_code == 201, response.text
+
+    second_id = response.json()["id"]
+
+    # Register it for cleanup.
+    todo_case["created_ids"].append(second_id)
+    todo_case["second_todo_id"] = second_id
+
+
+@when("I delete the first todo")
+def delete_first_todo(todo_case):
+    """Delete only the first Todo."""
+    first_id = todo_case["first_todo_id"]
+
+    todo_case["deleted_id"] = first_id
+
+    delete_todo_by_id(todo_case, first_id)
+
+
+@then(
+    parsers.parse(
+        'the second todo should still have title "{title}"'
+    )
+)
+def verify_second_todo_preserved(todo_case, title):
+    """Verify that deleting one Todo preserves another."""
+    second_id = todo_case["second_todo_id"]
+
+    response = requests.get(
+        f"{BASE_URL}/todos/{second_id}",
+        timeout=5
+    )
+
+    assert response.status_code == 200, response.text
+
+    todos = response.json()["todos"]
+
+    assert len(todos) == 1
+    assert todos[0]["id"] == second_id
+    assert todos[0]["title"] == title
+
+
+# --------------------
+# Error Flow
+# --------------------
+
+@given("I have already deleted the current todo")
+def delete_todo_during_setup(todo_case):
+    """Delete a Todo as the initial error-flow condition."""
+    todo_id = todo_case["todo_id"]
+
+    response = delete_todo_by_id(todo_case, todo_id)
+
+    assert response.status_code == 200, response.text
+
+    todo_case["deleted_id"] = todo_id
+
+
+@when("I delete the current todo again")
+def delete_todo_again(todo_case):
+    """Attempt to delete a Todo that no longer exists."""
+    todo_id = todo_case["deleted_id"]
+
+    delete_todo_by_id(todo_case, todo_id)
