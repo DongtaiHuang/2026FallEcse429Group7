@@ -11,15 +11,17 @@ BASE_URL = os.getenv(
     "TODO_API_URL", "http://localhost:4567"
 ).rstrip("/")
 
-FEATURE_FILE = (
+FEATURE_DIR = (
     Path(__file__).resolve().parents[1]
     / "features"
     / "todos"
-    / "create_todo.feature"
 )
 
-scenarios(str(FEATURE_FILE))
-
+scenarios(str(FEATURE_DIR / "create_todo.feature"))
+scenarios(str(FEATURE_DIR / "view_todo.feature"))
+scenarios(str(FEATURE_DIR / "update_todo.feature"))
+scenarios(str(FEATURE_DIR / "complete_todo.feature"))
+scenarios(str(FEATURE_DIR / "delete_todo.feature"))
 
 @pytest.fixture
 def todo_case():
@@ -173,3 +175,437 @@ def verify_todo_collection_unchanged(todo_case):
     }
 
     assert after_ids == todo_case["before_ids"]
+
+# ============================================================
+# T02 - View Todo
+# ============================================================
+
+# Setup: Create a todo before testing retrieval
+@given(parsers.parse('a todo exists with title "{title}"'))
+def given_todo_exists(todo_case, title):
+    response = requests.post(
+        f"{BASE_URL}/todos",
+        json={"title": title},
+        timeout=5
+    )
+
+    assert response.status_code == 201, response.text
+
+    todo_id = response.json()["id"]
+
+    # Register the todo for automatic cleanup
+    todo_case["created_ids"].append(todo_id)
+    todo_case["todo_id"] = todo_id
+    todo_case["title"] = title
+
+
+# Normal Flow: Retrieve the created todo by ID
+@when("I request the todo by its ID")
+def request_todo_by_id(todo_case):
+    todo_id = todo_case["todo_id"]
+
+    todo_case["response"] = requests.get(
+        f"{BASE_URL}/todos/{todo_id}",
+        timeout=5
+    )
+
+
+# Alternate Flow: Retrieve the entire todo list
+@when("I request the todo list")
+def request_todo_list(todo_case):
+    todo_case["response"] = requests.get(
+        f"{BASE_URL}/todos",
+        timeout=5
+    )
+
+
+# Error Flow: Retrieve a nonexistent todo
+@when(parsers.parse("I request a todo with ID {todo_id:d}"))
+def request_nonexistent_todo(todo_case, todo_id):
+    todo_case["response"] = requests.get(
+        f"{BASE_URL}/todos/{todo_id}",
+        timeout=5
+    )
+
+
+# Verify normal flow
+@then(
+    parsers.parse(
+        'the response should contain a todo with title "{title}"'
+    )
+)
+def verify_todo_by_id(todo_case, title):
+    response = todo_case["response"]
+
+    assert response.status_code == 200, response.text
+
+    todos = response.json()["todos"]
+
+    assert len(todos) == 1
+    assert todos[0]["id"] == todo_case["todo_id"]
+    assert todos[0]["title"] == title
+
+
+# Verify alternate flow
+@then(
+    parsers.parse(
+        'the todo list should contain title "{title}"'
+    )
+)
+def verify_todo_in_list(todo_case, title):
+    response = todo_case["response"]
+
+    assert response.status_code == 200, response.text
+
+    todos = response.json()["todos"]
+
+    assert any(
+        todo["id"] == todo_case["todo_id"]
+        and todo["title"] == title
+        for todo in todos
+    ), f"Created todo '{title}' not found in the list"
+
+# ============================================================
+# T03 - Update Todo
+# ============================================================
+
+def update_todo_field(todo_case, field, value):
+    """Update one field of the current todo."""
+    todo_id = todo_case["todo_id"]
+
+    response = requests.post(
+        f"{BASE_URL}/todos/{todo_id}",
+        json={field: value},
+        timeout=5
+    )
+
+    todo_case["response"] = response
+
+
+def get_current_todo(todo_case):
+    """Retrieve the todo after an update."""
+    todo_id = todo_case["todo_id"]
+
+    response = requests.get(
+        f"{BASE_URL}/todos/{todo_id}",
+        timeout=5
+    )
+
+    assert response.status_code == 200, response.text
+
+    todos = response.json()["todos"]
+    assert len(todos) == 1
+
+    return todos[0]
+
+
+# --------------------
+# Normal Flow
+# --------------------
+
+@when(
+    parsers.parse(
+        'I update the todo title to "{new_title}"'
+    )
+)
+def update_todo_title(todo_case, new_title):
+    update_todo_field(
+        todo_case,
+        "title",
+        new_title
+    )
+
+
+@then(
+    parsers.parse(
+        'the todo should have title "{title}"'
+    )
+)
+def verify_updated_title(todo_case, title):
+    todo = get_current_todo(todo_case)
+
+    assert todo["title"] == title, (
+        f"Expected title '{title}', "
+        f"but got '{todo['title']}'"
+    )
+
+
+# --------------------
+# Alternate Flow
+# --------------------
+
+@when(
+    parsers.parse(
+        'I update the todo description to "{description}"'
+    )
+)
+def update_todo_description(todo_case, description):
+    update_todo_field(
+        todo_case,
+        "description",
+        description
+    )
+
+
+@then(
+    parsers.parse(
+        'the todo should have description "{description}"'
+    )
+)
+def verify_updated_description(todo_case, description):
+    todo = get_current_todo(todo_case)
+
+    assert todo["description"] == description
+
+
+@then(
+    parsers.parse(
+        'the todo title should remain "{title}"'
+    )
+)
+def verify_title_unchanged(todo_case, title):
+    todo = get_current_todo(todo_case)
+
+    assert todo["title"] == title, (
+        "Updating the description unexpectedly "
+        "changed the todo title"
+    )
+
+
+# --------------------
+# Error Flow
+# --------------------
+
+@when("I update the todo title to an empty string")
+def update_todo_with_empty_title(todo_case):
+    # Save the original values before updating.
+    todo_case["original_todo"] = get_current_todo(todo_case).copy()
+
+    update_todo_field(
+        todo_case,
+        "title",
+        ""
+    )
+
+
+@then(
+    parsers.parse(
+        'the todo should still have its original title "{title}"'
+    )
+)
+def verify_original_todo_preserved(todo_case, title):
+    todo = get_current_todo(todo_case)
+    original = todo_case["original_todo"]
+
+    assert original["title"] == title
+
+    # Invalid updates must not modify the todo.
+    assert todo == original, (
+        "The invalid update changed the original todo"
+    )
+
+# ============================================================
+# T04 - Complete Todo
+# ============================================================
+
+@given(
+    parsers.parse(
+        'the todo has completion status "{status}"'
+    )
+)
+def given_todo_completion_status(todo_case, status):
+    """Set up the todo with the required initial status."""
+    assert status in ("true", "false")
+
+    update_todo_field(
+        todo_case,
+        "doneStatus",
+        status == "true"
+    )
+
+    response = todo_case["response"]
+    assert response.status_code == 200, response.text
+
+    todo = get_current_todo(todo_case)
+
+    assert str(todo["doneStatus"]).lower() == status
+
+
+@when(
+    parsers.parse(
+        'I change the todo completion status to "{status}"'
+    )
+)
+def change_todo_completion_status(todo_case, status):
+    """Update the completion status through the API."""
+    todo_case["original_todo"] = get_current_todo(
+        todo_case
+    ).copy()
+
+    if status in ("true", "false"):
+        value = status == "true"
+    else:
+        value = status
+
+    update_todo_field(
+        todo_case,
+        "doneStatus",
+        value
+    )
+
+
+@then(
+    parsers.parse(
+        'the todo completion status should be "{status}"'
+    )
+)
+def verify_todo_completion_status(todo_case, status):
+    """Check that the completion status was saved."""
+    todo = get_current_todo(todo_case)
+
+    actual_status = str(todo["doneStatus"]).lower()
+
+    assert actual_status == status, (
+        f"Expected doneStatus '{status}', "
+        f"but got '{actual_status}'"
+    )
+
+
+@then("the todo completion status should remain unchanged")
+def verify_completion_status_unchanged(todo_case):
+    """Confirm an invalid update preserves the original todo."""
+    original = todo_case["original_todo"]
+    current = get_current_todo(todo_case)
+
+    assert current == original, (
+        "An invalid completion status changed the todo"
+    )
+
+# ============================================================
+# T05 - Delete Todo
+# ============================================================
+
+def delete_todo_by_id(todo_case, todo_id):
+    """Delete a todo and store the API response."""
+    response = requests.delete(
+        f"{BASE_URL}/todos/{todo_id}",
+        timeout=5
+    )
+
+    todo_case["response"] = response
+    return response
+
+
+# --------------------
+# Normal Flow
+# --------------------
+
+@when("I delete the current todo")
+def delete_current_todo(todo_case):
+    """Delete the Todo created during setup."""
+    todo_id = todo_case["todo_id"]
+
+    todo_case["deleted_id"] = todo_id
+
+    delete_todo_by_id(todo_case, todo_id)
+
+
+@then("the deleted todo should not be retrievable")
+def verify_deleted_todo(todo_case):
+    """Verify that a deleted Todo no longer exists."""
+    todo_id = todo_case["deleted_id"]
+
+    response = requests.get(
+        f"{BASE_URL}/todos/{todo_id}",
+        timeout=5
+    )
+
+    assert response.status_code == 404, (
+        f"Deleted todo {todo_id} still exists: "
+        f"HTTP {response.status_code}"
+    )
+
+
+# --------------------
+# Alternate Flow
+# --------------------
+
+@given(
+    parsers.parse(
+        'a second todo exists with title "{title}"'
+    )
+)
+def create_second_todo(todo_case, title):
+    """Create a second Todo to verify no side effects."""
+    todo_case["first_todo_id"] = todo_case["todo_id"]
+
+    response = requests.post(
+        f"{BASE_URL}/todos",
+        json={"title": title},
+        timeout=5
+    )
+
+    assert response.status_code == 201, response.text
+
+    second_id = response.json()["id"]
+
+    # Register it for cleanup.
+    todo_case["created_ids"].append(second_id)
+    todo_case["second_todo_id"] = second_id
+
+
+@when("I delete the first todo")
+def delete_first_todo(todo_case):
+    """Delete only the first Todo."""
+    first_id = todo_case["first_todo_id"]
+
+    todo_case["deleted_id"] = first_id
+
+    delete_todo_by_id(todo_case, first_id)
+
+
+@then(
+    parsers.parse(
+        'the second todo should still have title "{title}"'
+    )
+)
+def verify_second_todo_preserved(todo_case, title):
+    """Verify that deleting one Todo preserves another."""
+    second_id = todo_case["second_todo_id"]
+
+    response = requests.get(
+        f"{BASE_URL}/todos/{second_id}",
+        timeout=5
+    )
+
+    assert response.status_code == 200, response.text
+
+    todos = response.json()["todos"]
+
+    assert len(todos) == 1
+    assert todos[0]["id"] == second_id
+    assert todos[0]["title"] == title
+
+
+# --------------------
+# Error Flow
+# --------------------
+
+@given("I have already deleted the current todo")
+def delete_todo_during_setup(todo_case):
+    """Delete a Todo as the initial error-flow condition."""
+    todo_id = todo_case["todo_id"]
+
+    response = delete_todo_by_id(todo_case, todo_id)
+
+    assert response.status_code == 200, response.text
+
+    todo_case["deleted_id"] = todo_id
+
+
+@when("I delete the current todo again")
+def delete_todo_again(todo_case):
+    """Attempt to delete a Todo that no longer exists."""
+    todo_id = todo_case["deleted_id"]
+
+    delete_todo_by_id(todo_case, todo_id)
