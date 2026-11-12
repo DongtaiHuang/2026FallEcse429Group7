@@ -11,15 +11,14 @@ BASE_URL = os.getenv(
     "TODO_API_URL", "http://localhost:4567"
 ).rstrip("/")
 
-FEATURE_FILE = (
+FEATURE_DIR = (
     Path(__file__).resolve().parents[1]
     / "features"
     / "todos"
-    / "create_todo.feature"
 )
 
-scenarios(str(FEATURE_FILE))
-
+scenarios(str(FEATURE_DIR / "create_todo.feature"))
+scenarios(str(FEATURE_DIR / "view_todo.feature"))
 
 @pytest.fixture
 def todo_case():
@@ -173,3 +172,92 @@ def verify_todo_collection_unchanged(todo_case):
     }
 
     assert after_ids == todo_case["before_ids"]
+
+# ============================================================
+# T02 - View Todo
+# ============================================================
+
+# Setup: Create a todo before testing retrieval
+@given(parsers.parse('a todo exists with title "{title}"'))
+def given_todo_exists(todo_case, title):
+    response = requests.post(
+        f"{BASE_URL}/todos",
+        json={"title": title},
+        timeout=5
+    )
+
+    assert response.status_code == 201, response.text
+
+    todo_id = response.json()["id"]
+
+    # Register the todo for automatic cleanup
+    todo_case["created_ids"].append(todo_id)
+    todo_case["todo_id"] = todo_id
+    todo_case["title"] = title
+
+
+# Normal Flow: Retrieve the created todo by ID
+@when("I request the todo by its ID")
+def request_todo_by_id(todo_case):
+    todo_id = todo_case["todo_id"]
+
+    todo_case["response"] = requests.get(
+        f"{BASE_URL}/todos/{todo_id}",
+        timeout=5
+    )
+
+
+# Alternate Flow: Retrieve the entire todo list
+@when("I request the todo list")
+def request_todo_list(todo_case):
+    todo_case["response"] = requests.get(
+        f"{BASE_URL}/todos",
+        timeout=5
+    )
+
+
+# Error Flow: Retrieve a nonexistent todo
+@when(parsers.parse("I request a todo with ID {todo_id:d}"))
+def request_nonexistent_todo(todo_case, todo_id):
+    todo_case["response"] = requests.get(
+        f"{BASE_URL}/todos/{todo_id}",
+        timeout=5
+    )
+
+
+# Verify normal flow
+@then(
+    parsers.parse(
+        'the response should contain a todo with title "{title}"'
+    )
+)
+def verify_todo_by_id(todo_case, title):
+    response = todo_case["response"]
+
+    assert response.status_code == 200, response.text
+
+    todos = response.json()["todos"]
+
+    assert len(todos) == 1
+    assert todos[0]["id"] == todo_case["todo_id"]
+    assert todos[0]["title"] == title
+
+
+# Verify alternate flow
+@then(
+    parsers.parse(
+        'the todo list should contain title "{title}"'
+    )
+)
+def verify_todo_in_list(todo_case, title):
+    response = todo_case["response"]
+
+    assert response.status_code == 200, response.text
+
+    todos = response.json()["todos"]
+
+    assert any(
+        todo["id"] == todo_case["todo_id"]
+        and todo["title"] == title
+        for todo in todos
+    ), f"Created todo '{title}' not found in the list"
