@@ -19,8 +19,8 @@ FEATURE_DIR = (
 )
 
 scenarios(str(FEATURE_DIR / "create_project.feature"))
-
-
+scenarios(str(FEATURE_DIR / "view_projects.feature"))
+scenarios(str(FEATURE_DIR / "update_project.feature"))
 # ============================================================
 # Shared fixtures and helpers
 # ============================================================
@@ -224,3 +224,174 @@ def verify_project_collection_unchanged(project_case):
     assert response.json()["projects"] == (
         project_case["before_projects"]
     ), "Invalid project creation changed the collection"
+
+# ============================================================
+# P02 - View Projects
+# ============================================================
+
+# Shared setup for project viewing
+
+@given(parsers.parse('a project exists with title "{title}"'))
+def given_project_exists(project_case, title):
+    create_project(project_case, {"title": title})
+
+    response = project_case["response"]
+    assert response.status_code == 201, response.text
+
+
+@given(parsers.parse('another project exists with title "{title}"'))
+def given_another_project_exists(project_case, title):
+    create_project(project_case, {"title": title})
+
+    response = project_case["response"]
+    assert response.status_code == 201, response.text
+
+
+# Normal and Alternate Flows
+
+@when("I request the project list")
+def request_project_list(project_case):
+    project_case["response"] = requests.get(
+        f"{BASE_URL}/projects",
+        timeout=5
+    )
+
+
+@then(
+    parsers.parse(
+        'the project list should contain title "{title}"'
+    )
+)
+def verify_project_in_list(project_case, title):
+    response = project_case["response"]
+
+    assert response.status_code == 200, response.text
+
+    projects = response.json()["projects"]
+
+    # Verify a project created during this scenario
+    # appears in the returned collection.
+    created_ids = set(project_case["created_ids"])
+
+    assert any(
+        project["id"] in created_ids
+        and project["title"] == title
+        for project in projects
+    ), f"Project '{title}' was not found in the list"
+
+
+# Error Flow
+
+@when(
+    parsers.parse(
+        "I request a project with ID {project_id:d}"
+    )
+)
+def request_invalid_project(project_case, project_id):
+    project_case["response"] = requests.get(
+        f"{BASE_URL}/projects/{project_id}",
+        timeout=5
+    )
+
+
+@then("no project should be returned")
+def verify_no_project_returned(project_case):
+    response = project_case["response"]
+
+    assert response.status_code == 404, response.text
+
+    data = response.json()
+
+    # Todo Manager reports failed lookups through
+    # an errorMessages response.
+    assert "errorMessages" in data
+    assert data["errorMessages"]
+
+# ============================================================
+# P03 - Update Project
+# ============================================================
+
+@given(
+    parsers.parse(
+        'a project exists with title "{title}" '
+        'and description "{description}"'
+    )
+)
+def given_project_with_description(
+    project_case, title, description
+):
+    create_project(
+        project_case,
+        {"title": title, "description": description}
+    )
+    assert project_case["response"].status_code == 201
+
+
+@when(
+    parsers.parse('I rename the project to "{title}"')
+)
+def rename_project(project_case, title):
+    project_id = project_case["project_id"]
+
+    project_case["response"] = requests.post(
+        f"{BASE_URL}/projects/{project_id}",
+        json={"title": title},
+        timeout=5
+    )
+
+
+@when(
+    parsers.parse('I replace the project with title "{title}"')
+)
+def replace_project(project_case, title):
+    project_id = project_case["project_id"]
+
+    project_case["response"] = requests.put(
+        f"{BASE_URL}/projects/{project_id}",
+        json={"title": title},
+        timeout=5
+    )
+
+
+@when(
+    parsers.parse(
+        'I update the project completed status to "{status}"'
+    )
+)
+def update_invalid_completed_status(project_case, status):
+    project_id = project_case["project_id"]
+
+    project_case["original_project"] = get_project(
+        project_id
+    ).copy()
+
+    project_case["response"] = requests.post(
+        f"{BASE_URL}/projects/{project_id}",
+        json={"completed": status},
+        timeout=5
+    )
+
+
+@then(
+    parsers.parse(
+        'the updated project should have title "{title}"'
+    )
+)
+def verify_updated_project_title(project_case, title):
+    project = get_project(project_case["project_id"])
+
+    assert project["title"] == title
+
+
+@then("the updated project description should be empty")
+def verify_empty_project_description(project_case):
+    project = get_project(project_case["project_id"])
+
+    assert project["description"] == ""
+
+
+@then("the project should remain unchanged")
+def verify_project_unchanged(project_case):
+    project = get_project(project_case["project_id"])
+
+    assert project == project_case["original_project"]
