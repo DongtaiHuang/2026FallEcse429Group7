@@ -25,6 +25,7 @@ scenarios(str(FEATURE_DIR / "link_todo_project.feature"))
 scenarios(str(FEATURE_DIR / "link_todo_category.feature"))
 scenarios(str(FEATURE_DIR / "view_project_todos.feature"))
 scenarios(str(FEATURE_DIR / "view_todo_categories.feature"))
+scenarios(str(FEATURE_DIR / "unlink_todo_project.feature"))
 # ============================================================
 # Shared API Helpers
 # ============================================================
@@ -753,3 +754,117 @@ def request_todo_categories_unsupported_format(
         f"/todos/{todo_id}/categories",
         headers={"Accept": media_type}
     )
+
+# ============================================================
+# I05 - Unlink Todo from Project
+# ============================================================
+
+# --------------------
+# Normal Flow and Error Flow
+# --------------------
+
+@when("I unlink the todo from the project")
+def unlink_todo_from_project(interoperability_case):
+    """Remove a Todo-Project relationship."""
+    project_id = interoperability_case["project_id"]
+    todo_id = interoperability_case["todo_id"]
+
+    interoperability_case["response"] = send_request(
+        "DELETE",
+        f"/projects/{project_id}/tasks/{todo_id}"
+    )
+
+
+@then("the todo and project should still exist")
+def verify_todo_and_project_exist(interoperability_case):
+    """Unlinking must not delete either entity."""
+    project_id = interoperability_case["project_id"]
+    todo_id = interoperability_case["todo_id"]
+
+    project_response = send_request(
+        "GET",
+        f"/projects/{project_id}"
+    )
+
+    todo_response = send_request(
+        "GET",
+        f"/todos/{todo_id}"
+    )
+
+    assert project_response.status_code == 200, (
+        f"Project {project_id} was deleted unexpectedly"
+    )
+
+    assert todo_response.status_code == 200, (
+        f"Todo {todo_id} was deleted unexpectedly"
+    )
+
+    project_ids = {
+        project["id"]
+        for project in project_response.json()["projects"]
+    }
+
+    todo_ids = {
+        todo["id"]
+        for todo in todo_response.json()["todos"]
+    }
+
+    assert project_id in project_ids
+    assert todo_id in todo_ids
+
+
+# --------------------
+# Alternate Flow
+# --------------------
+
+@when("I unlink the first todo from the project")
+def unlink_first_todo_from_project(interoperability_case):
+    """Remove the first Todo while keeping the second linked."""
+    project_id = interoperability_case["project_id"]
+    first_todo_id = interoperability_case["todo_id"]
+
+    interoperability_case["response"] = send_request(
+        "DELETE",
+        f"/projects/{project_id}/tasks/{first_todo_id}"
+    )
+
+
+@then("the project should contain only the second todo")
+def verify_only_second_todo_remains(interoperability_case):
+    """Ensure unlinking one Todo preserves the other link."""
+    project_id = interoperability_case["project_id"]
+    second_todo_id = interoperability_case["second_todo_id"]
+
+    linked_ids = get_linked_ids(
+        f"/projects/{project_id}/tasks",
+        "todos"
+    )
+
+    assert set(linked_ids) == {second_todo_id}, (
+        f"Expected only Todo {second_todo_id}, "
+        f"but received {linked_ids}"
+    )
+
+
+@then("both todos should still exist")
+def verify_both_todos_exist(interoperability_case):
+    """Verify that neither Todo was deleted."""
+    first_id = interoperability_case["todo_id"]
+    second_id = interoperability_case["second_todo_id"]
+
+    for todo_id in (first_id, second_id):
+        response = send_request(
+            "GET",
+            f"/todos/{todo_id}"
+        )
+
+        assert response.status_code == 200, (
+            f"Todo {todo_id} should still exist"
+        )
+
+        returned_ids = {
+            todo["id"]
+            for todo in response.json()["todos"]
+        }
+
+        assert todo_id in returned_ids
