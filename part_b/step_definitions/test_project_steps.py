@@ -21,6 +21,7 @@ FEATURE_DIR = (
 scenarios(str(FEATURE_DIR / "create_project.feature"))
 scenarios(str(FEATURE_DIR / "view_projects.feature"))
 scenarios(str(FEATURE_DIR / "update_project.feature"))
+scenarios(str(FEATURE_DIR / "retrieve_project.feature"))
 # ============================================================
 # Shared fixtures and helpers
 # ============================================================
@@ -395,3 +396,110 @@ def verify_project_unchanged(project_case):
     project = get_project(project_case["project_id"])
 
     assert project == project_case["original_project"]
+
+# ============================================================
+# P04 - Retrieve Project by ID
+# ============================================================
+
+@when("I request the current project by ID")
+def request_current_project_by_id(project_case):
+    """Retrieve the project created during the scenario."""
+    project_id = project_case["project_id"]
+
+    project_case["response"] = requests.get(
+        f"{BASE_URL}/projects/{project_id}",
+        timeout=5
+    )
+
+
+# --------------------
+# Normal Flow
+# --------------------
+
+@then(
+    parsers.parse(
+        'the retrieved project should have title "{title}"'
+    )
+)
+def verify_retrieved_project_title(project_case, title):
+    """Verify the returned project has the correct ID and title."""
+    response = project_case["response"]
+
+    assert response.status_code == 200, response.text
+
+    projects = response.json()["projects"]
+
+    assert len(projects) == 1, response.text
+
+    project = projects[0]
+
+    assert project["id"] == project_case["project_id"]
+    assert project["title"] == title
+
+
+@then(
+    parsers.parse(
+        'the retrieved project should have description "{description}"'
+    )
+)
+def verify_retrieved_project_description(
+    project_case, description
+):
+    """Verify the returned project description."""
+    response = project_case["response"]
+
+    assert response.status_code == 200, response.text
+
+    projects = response.json()["projects"]
+
+    assert len(projects) == 1
+    assert projects[0]["description"] == description
+
+
+# --------------------
+# Alternate Flow
+# --------------------
+
+@then("the retrieved project should have an empty description")
+def verify_retrieved_project_empty_description(project_case):
+    """Verify a project created without a description."""
+    response = project_case["response"]
+
+    assert response.status_code == 200, response.text
+
+    projects = response.json()["projects"]
+
+    assert len(projects) == 1
+    assert projects[0]["description"] == ""
+
+
+# --------------------
+# Error Flow
+# --------------------
+
+@given("the current project has been deleted")
+def delete_current_project_during_setup(project_case):
+    """Delete the project before attempting retrieval."""
+    project_id = project_case["project_id"]
+
+    response = requests.delete(
+        f"{BASE_URL}/projects/{project_id}",
+        timeout=5
+    )
+
+    assert response.status_code == 200, response.text
+
+
+@then("the response should contain project error messages")
+def verify_project_error_messages(project_case):
+    """Verify the API returns an error rather than project data."""
+    response = project_case["response"]
+
+    assert response.status_code == 404, response.text
+
+    data = response.json()
+
+    assert "errorMessages" in data, response.text
+    assert isinstance(data["errorMessages"], list)
+    assert data["errorMessages"], "Expected non-empty error messages"
+    assert "projects" not in data or not data["projects"]
