@@ -23,7 +23,7 @@ FEATURE_DIR = (
 
 scenarios(str(FEATURE_DIR / "link_todo_project.feature"))
 scenarios(str(FEATURE_DIR / "link_todo_category.feature"))
-
+scenarios(str(FEATURE_DIR / "view_project_todos.feature"))
 
 # ============================================================
 # Shared API Helpers
@@ -481,4 +481,146 @@ def verify_no_linked_categories(interoperability_case):
     assert linked_ids == [], (
         "Invalid category request unexpectedly "
         "created a Todo-Category relationship"
+    )
+
+# ============================================================
+# I03 - View Project Todos
+# ============================================================
+
+def create_project_todo_link(case, todo_id):
+    """Link a Todo to the current Project for test setup."""
+    project_id = case["project_id"]
+
+    response = send_request(
+        "POST",
+        f"/projects/{project_id}/tasks",
+        json={"id": todo_id}
+    )
+
+    assert response.status_code == 201, response.text
+
+    case["created_links"].append(
+        (project_id, todo_id)
+    )
+
+
+# --------------------
+# Setup
+# --------------------
+
+@given("the todo is linked to the project")
+def given_todo_is_linked_to_project(interoperability_case):
+    todo_id = interoperability_case["todo_id"]
+
+    create_project_todo_link(
+        interoperability_case,
+        todo_id
+    )
+
+
+@given(
+    parsers.parse(
+        'another todo named "{title}" exists'
+    )
+)
+def given_second_todo_exists(interoperability_case, title):
+    todo_id = create_entity(
+        interoperability_case,
+        "todos",
+        title
+    )
+
+    interoperability_case["second_todo_id"] = todo_id
+
+
+@given("both todos are linked to the project")
+def given_both_todos_are_linked(interoperability_case):
+    first_id = interoperability_case["todo_id"]
+    second_id = interoperability_case["second_todo_id"]
+
+    create_project_todo_link(
+        interoperability_case,
+        first_id
+    )
+
+    create_project_todo_link(
+        interoperability_case,
+        second_id
+    )
+
+
+# --------------------
+# Normal and Alternate Flows
+# --------------------
+
+@when("I request the todos belonging to the project")
+def request_project_todos(interoperability_case):
+    project_id = interoperability_case["project_id"]
+
+    interoperability_case["response"] = send_request(
+        "GET",
+        f"/projects/{project_id}/tasks"
+    )
+
+
+@then("the project todo list should contain the linked todo")
+def verify_project_todo_list(interoperability_case):
+    response = interoperability_case["response"]
+
+    todos = response.json()["todos"]
+
+    actual_ids = {
+        todo["id"]
+        for todo in todos
+    }
+
+    expected_id = interoperability_case["todo_id"]
+
+    assert actual_ids == {expected_id}, (
+        f"Expected Todo {expected_id}, "
+        f"but received {actual_ids}"
+    )
+
+
+@then("the project todo list should contain both linked todos")
+def verify_project_two_todos(interoperability_case):
+    response = interoperability_case["response"]
+
+    todos = response.json()["todos"]
+
+    actual_ids = {
+        todo["id"]
+        for todo in todos
+    }
+
+    expected_ids = {
+        interoperability_case["todo_id"],
+        interoperability_case["second_todo_id"]
+    }
+
+    assert actual_ids == expected_ids, (
+        f"Expected Todos {expected_ids}, "
+        f"but received {actual_ids}"
+    )
+
+
+
+# --------------------
+# Error Flow
+# --------------------
+
+@when(
+    parsers.parse(
+        'I request the project todos with unsupported Accept "{media_type}"'
+    )
+)
+def request_project_todos_unsupported_format(
+    interoperability_case, media_type
+):
+    project_id = interoperability_case["project_id"]
+
+    interoperability_case["response"] = send_request(
+        "GET",
+        f"/projects/{project_id}/tasks",
+        headers={"Accept": media_type}
     )
