@@ -22,6 +22,7 @@ scenarios(str(FEATURE_DIR / "create_project.feature"))
 scenarios(str(FEATURE_DIR / "view_projects.feature"))
 scenarios(str(FEATURE_DIR / "update_project.feature"))
 scenarios(str(FEATURE_DIR / "retrieve_project.feature"))
+scenarios(str(FEATURE_DIR / "delete_project.feature"))
 # ============================================================
 # Shared fixtures and helpers
 # ============================================================
@@ -477,6 +478,7 @@ def verify_retrieved_project_empty_description(project_case):
 # Error Flow
 # --------------------
 
+
 @given("the current project has been deleted")
 def delete_current_project_during_setup(project_case):
     """Delete the project before attempting retrieval."""
@@ -488,6 +490,10 @@ def delete_current_project_during_setup(project_case):
     )
 
     assert response.status_code == 200, response.text
+
+    # Save the deleted ID for P04 and P05.
+    project_case["deleted_id"] = project_id
+
 
 
 @then("the response should contain project error messages")
@@ -503,3 +509,110 @@ def verify_project_error_messages(project_case):
     assert isinstance(data["errorMessages"], list)
     assert data["errorMessages"], "Expected non-empty error messages"
     assert "projects" not in data or not data["projects"]
+
+# ============================================================
+# P05 - Delete Project
+# ============================================================
+
+def delete_project_by_id(project_case, project_id):
+    """Delete a project and save the API response."""
+    response = requests.delete(
+        f"{BASE_URL}/projects/{project_id}",
+        timeout=5
+    )
+
+    project_case["response"] = response
+    return response
+
+
+# --------------------
+# Normal Flow
+# --------------------
+
+@when("I delete the current project")
+def delete_current_project(project_case):
+    """Delete the project created during setup."""
+    project_id = project_case["project_id"]
+
+    project_case["deleted_id"] = project_id
+    delete_project_by_id(project_case, project_id)
+
+
+@then("the deleted project should not be retrievable")
+def verify_deleted_project(project_case):
+    """Verify the deleted project no longer exists."""
+    project_id = project_case["deleted_id"]
+
+    response = requests.get(
+        f"{BASE_URL}/projects/{project_id}",
+        timeout=5
+    )
+
+    assert response.status_code == 404, (
+        f"Deleted project {project_id} still exists: "
+        f"HTTP {response.status_code}"
+    )
+
+
+# --------------------
+# Alternate Flow
+# --------------------
+
+@given(
+    parsers.parse(
+        'a second project exists with title "{title}"'
+    )
+)
+def create_second_project(project_case, title):
+    """Create another project that must be preserved."""
+    project_case["first_project_id"] = (
+        project_case["project_id"]
+    )
+
+    create_project(project_case, {"title": title})
+
+    response = project_case["response"]
+    assert response.status_code == 201, response.text
+
+    project_case["second_project_id"] = (
+        project_case["project_id"]
+    )
+
+
+@when("I delete the first project")
+def delete_first_project(project_case):
+    """Delete only the first project."""
+    first_id = project_case["first_project_id"]
+
+    project_case["deleted_id"] = first_id
+    delete_project_by_id(project_case, first_id)
+
+
+@then(
+    parsers.parse(
+        'the second project should still have title "{title}"'
+    )
+)
+def verify_second_project_preserved(project_case, title):
+    """Confirm the other project is unchanged."""
+    second_id = project_case["second_project_id"]
+
+    project = get_project(second_id)
+
+    assert project["id"] == second_id
+    assert project["title"] == title
+
+
+# --------------------
+# Error Flow
+# --------------------
+
+@when("I delete the current project again")
+def delete_project_again(project_case):
+    """Attempt to delete a previously deleted project."""
+    project_id = project_case["project_id"]
+
+    project_case["deleted_id"] = project_id
+
+    delete_project_by_id(project_case, project_id)
+    
