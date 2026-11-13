@@ -24,7 +24,7 @@ FEATURE_DIR = (
 scenarios(str(FEATURE_DIR / "link_todo_project.feature"))
 scenarios(str(FEATURE_DIR / "link_todo_category.feature"))
 scenarios(str(FEATURE_DIR / "view_project_todos.feature"))
-
+scenarios(str(FEATURE_DIR / "view_todo_categories.feature"))
 # ============================================================
 # Shared API Helpers
 # ============================================================
@@ -622,5 +622,134 @@ def request_project_todos_unsupported_format(
     interoperability_case["response"] = send_request(
         "GET",
         f"/projects/{project_id}/tasks",
+        headers={"Accept": media_type}
+    )
+    
+# ============================================================
+# I04 - View Todo Categories
+# ============================================================
+
+# --------------------
+# Setup
+# --------------------
+
+@given("the category is linked to the todo")
+def given_category_is_linked_to_todo(interoperability_case):
+    """Create one Todo-Category link before retrieval."""
+    category_id = interoperability_case["category_id"]
+
+    response = link_category_to_todo(
+        interoperability_case,
+        category_id
+    )
+
+    assert response.status_code == 201, response.text
+
+
+@given("both categories are linked to the todo")
+def given_both_categories_are_linked(interoperability_case):
+    """Create two Todo-Category links before retrieval."""
+    first_id = interoperability_case["category_id"]
+    second_id = interoperability_case["second_category_id"]
+
+    first_response = link_category_to_todo(
+        interoperability_case,
+        first_id
+    )
+
+    assert first_response.status_code == 201, (
+        first_response.text
+    )
+
+    second_response = link_category_to_todo(
+        interoperability_case,
+        second_id
+    )
+
+    assert second_response.status_code == 201, (
+        second_response.text
+    )
+
+
+# --------------------
+# Normal and Alternate Flows
+# --------------------
+
+@when("I request the categories belonging to the todo")
+def request_todo_categories(interoperability_case):
+    """GET the categories belonging to the current Todo."""
+    todo_id = interoperability_case["todo_id"]
+
+    interoperability_case["response"] = send_request(
+        "GET",
+        f"/todos/{todo_id}/categories"
+    )
+
+
+@then("the todo category list should contain the linked category")
+def verify_todo_category_list(interoperability_case):
+    """Verify exactly one expected Category is returned."""
+    response = interoperability_case["response"]
+
+    assert response.status_code == 200, response.text
+
+    categories = response.json()["categories"]
+
+    actual_ids = {
+        category["id"]
+        for category in categories
+    }
+
+    expected_id = interoperability_case["category_id"]
+
+    assert actual_ids == {expected_id}, (
+        f"Expected Category {expected_id}, "
+        f"but received {actual_ids}"
+    )
+
+
+@then("the todo category list should contain both linked categories")
+def verify_todo_two_categories(interoperability_case):
+    """Verify both assigned Categories are returned."""
+    response = interoperability_case["response"]
+
+    assert response.status_code == 200, response.text
+
+    categories = response.json()["categories"]
+
+    actual_ids = {
+        category["id"]
+        for category in categories
+    }
+
+    expected_ids = {
+        interoperability_case["category_id"],
+        interoperability_case["second_category_id"]
+    }
+
+    assert actual_ids == expected_ids, (
+        f"Expected Categories {expected_ids}, "
+        f"but received {actual_ids}"
+    )
+
+
+# --------------------
+# Error Flow
+# --------------------
+
+@when(
+    parsers.parse(
+        'I request the todo categories with unsupported Accept "{media_type}"'
+    )
+)
+def request_todo_categories_unsupported_format(
+    interoperability_case, media_type
+):
+    """Request a response format not supported by the API."""
+    todo_id = interoperability_case["todo_id"]
+
+    interoperability_case["response"] = send_request(
+        "GET",
+        f"/todos/{todo_id}/categories",
         headers={"Accept": media_type}
     )
