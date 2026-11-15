@@ -48,8 +48,8 @@ Part B test setup creates temporary entities and cleans them up after each scena
 │   │   ├── category/              # C01–C05 Gherkin scenarios
 │   │   └── interoperability/      # I01–I05 Gherkin scenarios
 │   ├── step_definitions/          # Python pytest-bdd step implementations
-│   ├── support/                   # Part B supporting code
 │   └── docs/
+│       ├── bugs/                  # Part B bug reports
 │       ├── test-results/          # Saved pytest output
 │       └── deliverables/          # Submission-related material
 ├── requirements.txt
@@ -80,10 +80,9 @@ From the repository root:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python -m pip install pytest-bdd pytest-reverse
 ```
 
-The extra packages are required for the Part B Gherkin steps and the `--reverse` option; they are not currently listed in the root `requirements.txt`.
+`requirements.txt` includes everything needed for both parts: `pytest-bdd` runs the Part B Gherkin steps and `pytest-reverse` provides the `--reverse` option.
 
 ### Run Part A API tests
 
@@ -127,7 +126,7 @@ Run these commands **while the Todo Manager API is running**. The tests are inte
 
 ### Notable investigation
 
-During Part B I03 testing, requesting `GET /projects/abc/tasks` and `GET /projects/missing/tasks` returned HTTP 200 with a Todo collection instead of the expected missing-project error. This was recorded as a **potential API bug** that should be checked against the API contract before being labeled a confirmed defect.
+During Part B I03 testing, requesting `GET /projects/abc/tasks` and `GET /projects/missing/tasks` returned HTTP 200 with a Todo collection instead of the expected missing-project error. This was recorded as a **potential API bug** that should be checked against the API contract before being labeled a confirmed defect. See the bug report in [`part_b/docs/bugs/`](part_b/docs/bugs/).
 
 ## Course and team
 
