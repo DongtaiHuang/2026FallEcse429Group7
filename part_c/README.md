@@ -1,72 +1,98 @@
-# Part C — Performance Testing
+﻿# Part C: Todo Performance Test Suite
 
-This folder contains the dynamic performance test suite for the Todo Manager REST API.
+Measures how long the Todo Manager REST API takes to create, update and delete Todos as the workload grows. The suite follows the request approach used in our Part A tests (a shared requests session, with POST for Todo updates), but has its own client and cleanup code.
 
-## Scope
+## Test environment
 
-The suite measures three operations on Todo objects:
+| Item | Value |
+|---|---|
+| Operating system | Windows 11 Home China (10.0.26300) |
+| CPU and RAM | CPU: AMD Ryzen 9 7945HX with Radeon Graphics; RAM: 15.2 GB usable |
+| Java version | 21.0.4 LTS (Java HotSpot 64-Bit Server VM) |
+| Python version | 3.13.1 |
+| Application under test | runTodoManagerRestAPI-1.5.5.jar on localhost:4567 |
 
-- **CREATE:** POST `/todos`
-- **UPDATE:** POST `/todos/{id}` (the update method used by the existing Part A/Part B tests)
-- **DELETE:** DELETE `/todos/{id}`
+## Setup
 
-Each object is populated with randomly generated title and description data. The default workload sizes are 100, 500, 1,000, and 2,000 objects. Each workload is repeated three times.
+Run all commands from the repository root.
 
-## Prerequisites
+1. Activate the virtual environment: `.\.venv\Scripts\Activate.ps1`
+2. Install dependencies (the script needs `requests`): `pip install -r requirements.txt`
+3. In a separate terminal, start the server: `java -jar runTodoManagerRestAPI-1.5.5.jar`
 
-1. Python 3.10+
-2. Dependencies from the repository root:
-   ```powershell
-   python -m pip install -r requirements.txt
-   ```
-3. Start the Todo Manager API in a separate terminal:
-   ```powershell
-   java -jar runTodoManagerRestAPI-1.5.5.jar
-   ```
-
-The default API URL is `http://localhost:4567`. Set `TODO_API_URL` is not currently required; use `--base-url` to override the URL.
+The JAR must be in the folder where you run the command. Restart the server before each full run, and after any interrupted or failed run.
 
 ## Run
 
-From the repository root:
+Final experiment (start CPU and memory monitoring first):
 
 ```powershell
-python -m part_c.performance_test
+python -m part_c.performance_test --sizes 100,500,1000,2000,5000,10000,20000 --repeats 5 --output part_c/results/final_run1.csv
 ```
 
-Customize the experiment:
+Quick check:
 
 ```powershell
-python -m part_c.performance_test --sizes 100,500,1000,2000 --repeats 3
-python -m part_c.performance_test --operations create
-python -m part_c.performance_test --operations update,delete --sizes 100,500
-python -m part_c.performance_test --base-url http://localhost:4567 --output part_c/results/run1.csv
+python -m part_c.performance_test --sizes 100,500 --repeats 1 --output part_c/results/trial.csv
 ```
 
-## Measurement method
+| Option | Default | Meaning |
+|---|---|---|
+| `--base-url` | `http://localhost:4567` | Server address |
+| `--sizes` | `100,500,1000,2000,5000` | Workload sizes |
+| `--repeats` | `3` | Repetitions per operation and size |
+| `--operations` | `create,update,delete` | Operations to test |
+| `--output` | `part_c/results/performance_results.csv` | Result file; must not already exist |
+| `--seed` | `429` | Seed for random data |
+| `--timeout` | `10` | Request timeout in seconds |
 
-- Random payload generation is performed before timing.
-- CREATE timing includes the sequence of API create requests only.
-- UPDATE and DELETE objects are created before the timed section.
-- UPDATE timing includes the sequence of update requests only.
-- DELETE timing includes the sequence of delete requests only.
-- Setup and cleanup requests are excluded from transaction timing.
-- Each experiment records total elapsed time, average time per requested object, throughput, successful operations, failed operations, and cleanup errors.
-- A unique run ID and UTC timestamp are recorded for traceability.
+## Method
 
-The script writes CSV results to `part_c/results/performance_results.csv` by default.
+- The script first checks that the service is available and stops if it is not.
+- For each selected operation, a 100-object warm-up runs first and is not recorded.
+- Operations run in the order given (by default create, update, delete). Each size is repeated before moving to the next.
+- Object count is the number of operations in a phase. Create adds that many Todos to the starting data, update runs with that many added, and delete removes them progressively.
+- Each timing uses `time.perf_counter()` around a sequential loop of requests. It includes client-side status checks and error handling. Create also includes reading the returned ID, and update includes building the update payload.
+- Initial data generation, setup for update and delete, and cleanup are excluded from timing.
+- Average time is total loop time divided by the requested object count, so check failure counts before comparing results.
 
-## CPU and memory monitoring
+## Test data
 
-CPU utilization and available memory must be collected separately while each experiment runs. The teammate responsible for resource monitoring should record the timestamp, operation, workload size, CPU percentage, and available memory in MB, then correlate these samples with the run IDs/timestamps in the performance CSV.
+Each Todo has a title containing the run ID, repeat number, index and an 8-character random suffix, plus a description containing the index and suffix. With the same sizes, operations and repeat count, the seed reproduces the suffixes. Run IDs differ between runs.
 
-On Windows, Performance Monitor can collect Processor\% Processor Time and Memory\Available MBytes. Record the sampling interval and machine configuration in the report.
+## Success checks and cleanup
 
-## Experimental cautions
+| Operation | Request | Expected status |
+|---|---|---|
+| Create | `POST /todos` | 201 |
+| Update | `POST /todos/{id}` | 200 |
+| Delete | `DELETE /todos/{id}` | 200 or 204 |
 
-- Run the API and test runner on the same machine for consistent comparisons.
-- Close unrelated high-load applications.
-- Use the same API process, machine, Java version, and workload sizes for each repetition.
-- Check that all operations succeeded and cleanup errors are zero before interpreting a result.
-- Large workloads can take time and consume memory. Increase the workload gradually.
-- The suite creates and deletes test data. Run it against the course test instance, not a shared production service.
+After each experiment, the script tries to delete the Todos whose IDs it recorded. A 404 during cleanup is accepted because the Todo is already gone. If operations or cleanups fail in a completed run, the script prints a warning and exits with code 1.
+
+## Output
+
+The CSV is saved after each experiment, with one row per operation, size and repeat. A full final run has 105 rows.
+
+| Column | Meaning |
+|---|---|
+| `phase_start`, `phase_end` | Local time with UTC offset, for matching monitoring samples |
+| `run_id` | Identifier for the script run |
+| `operation` | create, update or delete |
+| `object_count` | Requested number of operations |
+| `successful_operations`, `failed_operations` | Outcome counts |
+| `total_time_seconds` | Duration of the timed loop |
+| `average_time_ms_per_requested_object` | Total time divided by object count, in ms |
+| `operations_per_second` | Successful operations divided by total time |
+| `error_details` | Up to five errors |
+| `repeat` | Repetition number |
+| `cleanup_errors`, `cleanup_details` | Cleanup error count and up to five details |
+
+## Known limitations
+
+- The client and server share one computer, so they compete for CPU and memory.
+- Requests are sent one at a time, so concurrent load is not tested.
+- Only per-phase totals and averages are recorded, not individual request latencies.
+- Phases shorter than the monitoring interval may have no CPU or memory samples. Treat these as insufficient data, not zero.
+- The server is not restarted between experiments, so earlier experiments may affect later ones.
+- If a run is interrupted, or the server creates a Todo without the script receiving its ID, test data may remain. Restart the server.

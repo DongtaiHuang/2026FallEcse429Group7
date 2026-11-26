@@ -5,7 +5,7 @@ creation for UPDATE/DELETE are deliberately outside the timed region.
 
 Examples:
     python -m part_c.performance_test
-    python -m part_c.performance_test --sizes 100,500,1000,2000 --repeats 3
+    python -m part_c.performance_test --sizes 100,500,1000,2000,5000 --repeats 5
     python -m part_c.performance_test --operations create,update
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ import random
 import string
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,13 +24,19 @@ import requests
 
 
 DEFAULT_BASE_URL = "http://localhost:4567"
-DEFAULT_SIZES = (100, 500, 1000, 2000)
+DEFAULT_SIZES = (100, 500, 1000, 2000, 5000)
+WARMUP_SIZE = 100
 VALID_OPERATIONS = ("create", "update", "delete")
 SUCCESS_CODES = {
     "create": (201,),
     "update": (200,),
     "delete": (200, 204),
 }
+
+
+def local_timestamp() -> str:
+    """Local time with UTC offset, for matching monitoring samples."""
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
 class PerformanceRunner:
@@ -132,6 +138,7 @@ class PerformanceRunner:
     ) -> tuple[dict[str, Any], list[int]]:
         created_ids: list[int] = []
         errors: list[str] = []
+        phase_start = local_timestamp()
         started = time.perf_counter()
 
         for index, payload in enumerate(payloads):
@@ -153,12 +160,16 @@ class PerformanceRunner:
                 errors.append(f"create #{index}: {error}")
 
         elapsed = time.perf_counter() - started
-        return self.result_row("create", count, elapsed, len(created_ids), errors), created_ids
+        phase = (phase_start, local_timestamp())
+        return self.result_row(
+            "create", phase, count, elapsed, len(created_ids), errors
+        ), created_ids
 
     def measure_update(
         self, count: int, todo_ids: list[int], payloads: list[dict[str, Any]]
     ) -> dict[str, Any]:
         errors: list[str] = []
+        phase_start = local_timestamp()
         started = time.perf_counter()
 
         for index, (todo_id, payload) in enumerate(zip(todo_ids, payloads)):
@@ -180,12 +191,14 @@ class PerformanceRunner:
                 errors.append(f"update Todo {todo_id}: {error}")
 
         elapsed = time.perf_counter() - started
+        phase = (phase_start, local_timestamp())
         successful = count - len(errors)
-        return self.result_row("update", count, elapsed, successful, errors)
+        return self.result_row("update", phase, count, elapsed, successful, errors)
 
     def measure_delete(self, count: int, todo_ids: list[int]) -> dict[str, Any]:
         errors: list[str] = []
         deleted_ids: set[int] = set()
+        phase_start = local_timestamp()
         started = time.perf_counter()
 
         for todo_id in todo_ids:
@@ -202,18 +215,21 @@ class PerformanceRunner:
                 errors.append(f"delete Todo {todo_id}: {error}")
 
         elapsed = time.perf_counter() - started
-        return self.result_row("delete", count, elapsed, len(deleted_ids), errors)
+        phase = (phase_start, local_timestamp())
+        return self.result_row("delete", phase, count, elapsed, len(deleted_ids), errors)
 
     def result_row(
         self,
         operation: str,
+        phase: tuple[str, str],
         requested: int,
         elapsed: float,
         successful: int,
         errors: list[str],
     ) -> dict[str, Any]:
         return {
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "phase_start": phase[0],
+            "phase_end": phase[1],
             "run_id": self.run_id,
             "operation": operation,
             "object_count": requested,
@@ -305,7 +321,7 @@ def main() -> int:
         "--sizes",
         type=parse_sizes,
         default=DEFAULT_SIZES,
-        help="Comma-separated workload sizes (default: 100,500,1000,2000)",
+        help="Comma-separated workload sizes (default: 100,500,1000,2000,5000)",
     )
     parser.add_argument(
         "--repeats",
@@ -325,12 +341,17 @@ def main() -> int:
         default=Path("part_c/results/performance_results.csv"),
         help="CSV output path",
     )
+    parser.add_argument("--seed", type=int, default=429, help="Random data seed")
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
 
     if args.repeats <= 0:
         parser.error("--repeats must be positive")
 
+    if args.output.exists():
+        parser.error(f"{args.output} already exists; choose another --output")
+
+    random.seed(args.seed)
     runner = PerformanceRunner(args.base_url, args.timeout)
     rows: list[dict[str, Any]] = []
 
@@ -340,13 +361,19 @@ def main() -> int:
         print(f"Workloads: {', '.join(map(str, args.sizes))}")
         print(f"Operations: {', '.join(args.operations)}")
         print(f"Repeats: {args.repeats}")
-        print("Timing includes API requests only; setup and cleanup are excluded.")
+        print(f"Seed: {args.seed}")
+        print("Timing covers each request loop; setup and cleanup are excluded.")
+
+        print("Warm-up (results discarded)...")
+        for operation in args.operations:
+            runner.run_experiment(operation, WARMUP_SIZE, 0)
 
         for operation in args.operations:
             for size in args.sizes:
                 for repeat in range(1, args.repeats + 1):
                     row = runner.run_experiment(operation, size, repeat)
                     rows.append(row)
+                    write_results(rows, args.output)
                     print(
                         f"{operation.upper():6} | n={size:5} | "
                         f"repeat={repeat} | "
@@ -361,8 +388,10 @@ def main() -> int:
     finally:
         runner.close()
 
-    write_results(rows, args.output)
     print(f"\nResults saved to: {args.output.resolve()}")
+    if any(row["failed_operations"] or row["cleanup_errors"] for row in rows):
+        print("WARNING: some operations or cleanups failed; check the CSV.")
+        return 1
     return 0
 
 
